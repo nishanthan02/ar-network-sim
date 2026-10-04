@@ -3,61 +3,217 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-    <title>Phase 2 - Network Topology</title>
+    <title>Phase 3 - Packet Animation & Logic</title>
     <!-- Core A-Frame and AR.js Libraries -->
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+    <style>
+      /* Status indicator on top */
+      #status-card {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 9999;
+        background: rgba(15, 23, 42, 0.9);
+        color: #38bdf8;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-family: monospace;
+        font-size: 13px;
+        font-weight: bold;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        text-align: center;
+        width: 80%;
+        max-width: 320px;
+      }
+
+      /* Control buttons at the bottom */
+      #ui-controls {
+        position: fixed;
+        bottom: 25px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 9999;
+        display: flex;
+        gap: 12px;
+        background: rgba(15, 23, 42, 0.85);
+        padding: 10px 18px;
+        border-radius: 30px;
+        backdrop-filter: blur(8px);
+      }
+
+      button {
+        padding: 10px 16px;
+        border: none;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 13px;
+        cursor: pointer;
+        transition: transform 0.1s active;
+      }
+      button:active {
+        transform: scale(0.95);
+      }
+
+      #btn-send {
+        background: #38bdf8;
+        color: #0f172a;
+      }
+      #btn-firewall {
+        background: #22c55e;
+        color: #ffffff;
+      }
+    </style>
   </head>
+
   <body style="margin: 0; overflow: hidden;">
+    <!-- Floating 2D HUD -->
+    <div id="status-card">Status: Network Idle</div>
+    <div id="ui-controls">
+      <button id="btn-send" onclick="sendPacket()">Send Packet</button>
+      <button id="btn-firewall" onclick="toggleFirewall()">Firewall: ALLOW</button>
+    </div>
+
+    <!-- AR Scene -->
     <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
       <a-marker preset="hiro" smooth="true" smoothCount="10">
         
-        <!-- 1. Physical Ethernet Cable (Gray line connecting all nodes) -->
-        <a-entity line="start: -1.2 0.15 0; end: 1.2 0.15 0; color: #7f8c8d"></a-entity>
+        <!-- Ethernet Cable -->
+        <a-entity line="start: -1.2 0.15 0; end: 1.2 0.15 0; color: #94a3b8"></a-entity>
 
-        <!-- 2. Client Workstation (Blue Box) -->
-        <a-box position="-1.2 0.2 0" scale="0.35 0.35 0.35" color="#3498db"></a-box>
+        <!-- Client Node -->
+        <a-box position="-1.2 0.2 0" scale="0.35 0.35 0.35" color="#38bdf8"></a-box>
+        <!-- Rotation ensures readable text from top-down angles -->
         <a-text 
           value="Client PC\n192.168.1.50" 
-          position="-1.2 0.55 0" 
+          position="-1.2 0.6 0" 
+          rotation="-45 0 0"
           scale="0.35 0.35 0.35" 
           align="center" 
           color="#ffffff"
           material="side: double">
         </a-text>
 
-        <!-- 3. Gateway Firewall (Green Barrier Disc) -->
+        <!-- Firewall Node -->
         <a-cylinder 
           id="firewall-mesh" 
           position="0 0.2 0" 
           scale="0.08 0.45 0.45" 
           rotation="0 0 90" 
-          color="#2ecc71">
+          color="#22c55e">
         </a-cylinder>
         <a-text 
-          id="firewall-text" 
-          value="Firewall\n[ALLOW ALL]" 
-          position="0 0.55 0" 
+          id="firewall-label" 
+          value="Firewall\n[ALLOW]" 
+          position="0 0.6 0" 
+          rotation="-45 0 0"
           scale="0.35 0.35 0.35" 
           align="center" 
           color="#ffffff"
           material="side: double">
         </a-text>
 
-        <!-- 4. Web Server (Purple Server Rack Cylinder) -->
-        <a-cylinder position="1.2 0.25 0" scale="0.25 0.5 0.25" color="#9b59b6"></a-cylinder>
+        <!-- Web Server Node -->
+        <a-cylinder position="1.2 0.25 0" scale="0.25 0.5 0.25" color="#a855f7"></a-cylinder>
         <a-text 
           value="Web Server\n10.0.0.8" 
-          position="1.2 0.65 0" 
+          position="1.2 0.7 0" 
+          rotation="-45 0 0"
           scale="0.35 0.35 0.35" 
           align="center" 
           color="#ffffff"
           material="side: double">
         </a-text>
+
+        <!-- Traveling Network Packet (Hidden initially) -->
+        <a-sphere 
+          id="packet" 
+          position="-1.2 0.2 0" 
+          radius="0.09" 
+          color="#facc15" 
+          visible="false">
+        </a-sphere>
 
       </a-marker>
 
       <a-entity camera></a-entity>
     </a-scene>
+
+    <script>
+      let firewallBlockActive = false;
+      let isTransmitting = false;
+
+      function updateStatus(text, color = "#38bdf8") {
+        const card = document.getElementById("status-card");
+        card.innerText = text;
+        card.style.color = color;
+      }
+
+      function toggleFirewall() {
+        firewallBlockActive = !firewallBlockActive;
+        const btn = document.getElementById("btn-firewall");
+        const mesh = document.getElementById("firewall-mesh");
+        const label = document.getElementById("firewall-label");
+
+        if (firewallBlockActive) {
+          btn.innerText = "Firewall: BLOCK (Port 80)";
+          btn.style.background = "#ef4444";
+          mesh.setAttribute("color", "#ef4444");
+          label.setAttribute("value", "Firewall\n[BLOCK PORT 80]");
+        } else {
+          btn.innerText = "Firewall: ALLOW";
+          btn.style.background = "#22c55e";
+          mesh.setAttribute("color", "#22c55e");
+          label.setAttribute("value", "Firewall\n[ALLOW]");
+        }
+      }
+
+      function sendPacket() {
+        if (isTransmitting) return;
+        isTransmitting = true;
+
+        const packet = document.getElementById("packet");
+        let posX = -1.2;
+        
+        packet.setAttribute("position", `${posX} 0.2 0`);
+        packet.setAttribute("color", "#facc15"); // Gold for in-transit
+        packet.setAttribute("visible", "true");
+        updateStatus("TCP SYN sent -> In Transit...", "#facc15");
+
+        const timer = setInterval(() => {
+          posX += 0.02;
+          packet.setAttribute("position", `${posX} 0.2 0`);
+
+          // Reached Firewall (x around 0.0)
+          if (posX >= -0.05 && posX <= 0.05) {
+            if (firewallBlockActive) {
+              clearInterval(timer);
+              packet.setAttribute("color", "#ef4444"); // Red: dropped
+              updateStatus("403 Forbidden: Dropped by Firewall Rule!", "#ef4444");
+              setTimeout(() => {
+                packet.setAttribute("visible", "false");
+                isTransmitting = false;
+                updateStatus("Status: Network Idle", "#38bdf8");
+              }, 2000);
+              return;
+            }
+          }
+
+          // Reached Web Server (x >= 1.2)
+          if (posX >= 1.2) {
+            clearInterval(timer);
+            packet.setAttribute("color", "#22c55e"); // Green: success
+            updateStatus("HTTP 200 OK: Reached Server!", "#22c55e");
+            setTimeout(() => {
+              packet.setAttribute("visible", "false");
+              isTransmitting = false;
+              updateStatus("Status: Network Idle", "#38bdf8");
+            }, 2000);
+          }
+        }, 16);
+      }
+    </script>
   </body>
 </html>
