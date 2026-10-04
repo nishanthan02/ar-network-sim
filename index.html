@@ -43,7 +43,8 @@ const AR = !location.search.includes('3d');
 $vm = document.getElementById('vm'); $vm.textContent = AR ? 'AR' : '3D';
 
 /* ---------- Data ---------- */
-const Z = [-1.2, -.6, 0, .6, 1.2];
+/* compact snake layout: row 1 left→right (Client, Switch, Router), row 2 right→left (Firewall, Server) */
+const X = [-.62, 0, .62, .62, 0], Z = [-.32, -.32, -.32, .32, .32];
 const LN = {7:'Application',6:'Presentation',5:'Session',4:'Transport',3:'Network',2:'Data Link',1:'Physical'};
 const LC = {7:'#a855f7',6:'#c084fc',5:'#818cf8',4:'#38bdf8',3:'#22c55e',2:'#f59e0b',1:'#e2e8f0'};
 const ACT = {7:'HTTP data created',6:'encode / encrypt',5:'session tracked',4:'TCP header added (ports)',3:'IP header added (addresses)',2:'frame header added (MACs)',1:'converted to bits / signal'};
@@ -82,17 +83,19 @@ const RT = {
 };
 
 /* ---------- Build scene ---------- */
-const rot = AR ? '-90 0 0' : '0 90 0';
-let w = `<a-entity line="start:0 .02 -1.2;end:0 .02 1.2;color:#94a3b8"></a-entity>`;
+const rot = '-90 0 0';
+let w = '';
+for (let i=0;i<4;i++) w += `<a-entity line="start:${X[i]} .02 ${Z[i]};end:${X[i+1]} .02 ${Z[i+1]};color:#94a3b8"></a-entity>`;
 N.forEach((n,i)=>{
-  w += `<a-entity id="n${i}" position="0 0 ${Z[i]}">${n.v}<a-text id="t${i}" value="${n.name}\n${n.ip}\n[L${n.L}]" position="0 .6 0" rotation="${rot}" align="center" width="1.5" color="#fff" side="double"></a-text></a-entity>`;
+  const lo = Z[i]<0 ? -.27 : .27;  /* label sits outside the layout, away from neighbours */
+  w += `<a-entity id="n${i}" position="${X[i]} 0 ${Z[i]}">${n.v}<a-plane width=".58" height=".2" color="#0f172a" opacity=".75" transparent="true" rotation="${rot}" position="0 .03 ${lo}"></a-plane><a-text id="t${i}" value="${n.name}\n${n.ip}\n[L${n.L}]" position="0 .035 ${lo}" rotation="${rot}" align="center" width=".56" wrap-count="13" color="#fff" side="double"></a-text></a-entity>`;
 });
 let sh = '';
 for (let l = 7; l >= 1; l--) {
   const s = .08 + .035 * (7 - l);
   sh += `<a-box id="s${l}" width="${s}" height="${s}" depth="${s}" color="${LC[l]}" material="opacity:${l==7?1:.3};transparent:true;wireframe:${l==1}" visible="false"></a-box>`;
 }
-w += `<a-entity id="pkt" class="clickable" position="0 .3 ${Z[0]}" visible="false">${sh}</a-entity>`;
+w += `<a-entity id="pkt" class="clickable" position="${X[0]} .3 ${Z[0]}" visible="false">${sh}</a-entity>`;
 
 const sc = document.createElement('a-scene');
 sc.setAttribute('vr-mode-ui', 'enabled:false');
@@ -103,7 +106,7 @@ if (AR) {
   sc.setAttribute('arjs', 'sourceType:webcam;debugUIEnabled:false');
   sc.innerHTML = `<a-marker preset="hiro" smooth="true" smoothCount="10">${w}</a-marker><a-entity camera></a-entity>`;
 } else {
-  sc.innerHTML = `<a-sky color="#0b1220"></a-sky><a-plane rotation="-90 0 0" width="8" height="8" color="#111c33"></a-plane>${w}<a-entity camera look-controls position="3 1.6 0" rotation="-25 90 0"></a-entity>`;
+  sc.innerHTML = `<a-sky color="#0b1220"></a-sky><a-plane rotation="-90 0 0" width="8" height="8" color="#111c33"></a-plane>${w}<a-entity camera look-controls position="0 1.9 1.5" rotation="-55 0 0"></a-entity>`;
 }
 document.body.appendChild(sc);
 
@@ -113,7 +116,7 @@ $('lay').innerHTML = [7,6,5,4,3,2,1].map(l=>`<div id="h${l}" style="border-color
 
 /* ---------- State & helpers ---------- */
 let paused=false, stepMode=false, running=false, scen=0, lossDone=false, nextRes=null;
-let H={}, seg='A', loc='', z=Z[0], cur=null;
+let H={}, seg='A', loc='', px=X[0], z=Z[0], cur=null;
 const on = new Set();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const say = (t, c='#38bdf8') => { const e=$('st'); e.textContent=t; e.style.color=c; };
@@ -127,14 +130,15 @@ async function stepWait(){ if(!stepMode) return; $('nx').style.display='inline-b
 async function fail(m){ S(7).setAttribute('color','#ef4444'); say(m,'#ef4444'); await wait(2200); }
 
 /* delta-time movement: same speed on 60Hz and 120Hz screens, no setAttribute per frame */
-const move = to => new Promise(res => {
+const move = (tx,tz) => new Promise(res => {
   let t = performance.now();
   (function f(n){
     if(!paused){
-      const d=Math.min((n-t)/1000,.1), g=to-z;
-      z += Math.sign(g)*Math.min(.6*d, Math.abs(g));
-      P.object3D.position.z = z;
-      if(Math.abs(to-z)<1e-4) return res();
+      const d=Math.min((n-t)/1000,.1), dx=tx-px, dz=tz-z, L=Math.hypot(dx,dz);
+      if(L<1e-4) return res();
+      const s=Math.min(.5*d,L)/L; px+=dx*s; z+=dz*s;
+      P.object3D.position.set(px,.3,z);
+      if(Math.hypot(tx-px,tz-z)<1e-4) return res();
     }
     t=n; requestAnimationFrame(f);
   })(t);
@@ -179,16 +183,16 @@ async function deliver(p){
   const d=p.dir, a=d>0?0:4, b=d>0?4:0; cur=p; seg=d>0?'A':'B';
   H = {d, pl:p.pl, fl:p.fl, q:p.q, sp:d>0?49152:80, dp:d>0?80:49152,
        src:d>0?'192.168.1.50':'10.0.0.8', dst:d>0?'10.0.0.8':'192.168.1.50', ttl:(scen===2&&d>0)?1:64};
-  z=Z[a]; P.object3D.position.z=z; clearP(); S(7).setAttribute('color',p.c);
+  px=X[a]; z=Z[a]; P.object3D.position.set(px,.3,z); clearP(); S(7).setAttribute('color',p.c);
   P.object3D.visible=true; loc=N[a].name; pulse(a);
   say(`Sending ${p.n}…`, p.c); await wait(500);
   await encap(a);
   for (let i=a+d;;i+=d) {
     if (scen===3 && !lossDone && p.n==='SYN' && i===3) {
-      await move((Z[2]+Z[3])/2); lossDone=true;
+      await move((X[2]+X[3])/2,(Z[2]+Z[3])/2); lossDone=true;
       await fail('Packet lost in transit! No reply will come'); P.object3D.visible=false; return 'lost';
     }
-    await move(Z[i]); if (i===b) break;
+    await move(X[i],Z[i]); if (i===b) break;
     const r = await atNode(i,p);
     if (r) { P.object3D.visible=false; return r; }
   }
